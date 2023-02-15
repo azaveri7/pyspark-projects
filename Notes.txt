@@ -1,0 +1,93 @@
+1. Course Link :
+
+   https://github.com/LearningJournal/Spark-Programming-In-Python
+
+2. To execute Spark programs
+
+   - Interactive clients
+     spark-shell, notebook
+
+   - Submit job
+     spark-submit, databricks, notebook, rest api
+
+3. When we do groupBy in a dataframe, there will be shuffle sort of data in the available partitions
+
+  The number of partitions in which data will be shuffled is not fixed, so to control this behaviour,
+  set property
+
+  spark.sql.shuffle.partitions = 2
+
+  So after groupBy operation, there will be only 2 partitions.
+
+4. When to use RDD.
+
+     In case if we need to perform an operation on each row of spark dataset, we need to use RDD map method.
+     For e.g. replace '(single quote) with "(double quote) in each row.
+
+5. When u want to use spark SQL use createOrReplaceTempView on spark data-frame.
+
+6. When u read csv and json files in dataframe reader, the date type comes as string in the dataframe.
+   But if we read parquet, the data field will have type date. So parquet file contains data type alongwith
+   field name. So parquet is preferred and default file format with spark.
+
+7. To support AVRO, we need to add scala / java dependencies.
+   Python does not support this.
+
+   So we need to add this in spark-defaults.conf
+
+   spark.jars.packages org.apache.spark:spark-avro_2.11:2.4.5
+   spark.driver.extraJavaOptions      -Dlog4j.configuration=file:log4j.properties -Dspark.yarn.app.container.log.dir=app-logs -Dlogfile.name=hello-spark
+
+
+8. To check id of paritions and number of records in each partition
+
+  logger.info("Number of partitions : " + str(flightTimeParquetDF.rdd.getNumPartitions()))
+  flightTimeParquetDF.groupby(spark_partition_id()).count().show()
+
+9. To divide output into multiple Partitions
+
+partitionDF = flightTimeParquetDF.repartition(5)
+ logger.info("Number of partitions earlier : " + str(partitionDF.rdd.getNumPartitions()))
+ partitionDF.groupby(spark_partition_id()).count().show()
+
+ partitionDF.write \
+     .format("avro") \
+     .mode("overwrite") \
+     .option("path", "dataSink/partitionDF/avro/") \
+     .save()
+
+10. To partition by particular columns
+
+  flightTimeParquetDF.write \
+      .format("json") \
+      .mode("overwrite") \
+      .option("path", "dataSink/json/") \
+      .partitionBy("OP_CARRIER", "ORIGIN") \
+      .save()
+
+    In the output files, columns OP_CARRIER and ORIGIN will be missing.
+
+11. To limit the records per file in a partition.
+
+flightTimeParquetDF.write \
+    .format("json") \
+    .mode("overwrite") \
+    .option("path", "dataSink/json/") \
+    .partitionBy("OP_CARRIER", "ORIGIN") \
+    .option("maxRecordsPerFile", "10000") \
+    .save()
+
+12. If partitionBy is used on a column having large number of unique values,
+    it will create a lot of partitions.
+
+    flightTimeParquetDF.write \
+        .mode("overwrite") \
+        .partitionBy("ORIGIN","OP_CARRIER") \
+        .saveAsTable("flight_data_tbl")
+
+    Replace it with:
+
+    flightTimeParquetDF.write \
+        .mode("overwrite") \
+        .bucketBy(5, "ORIGIN","OP_CARRIER") \
+        .saveAsTable("flight_data_tbl")    
