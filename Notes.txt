@@ -90,4 +90,67 @@ flightTimeParquetDF.write \
     flightTimeParquetDF.write \
         .mode("overwrite") \
         .bucketBy(5, "ORIGIN","OP_CARRIER") \
-        .saveAsTable("flight_data_tbl")    
+        .saveAsTable("flight_data_tbl")
+
+13. UDF function:
+
+survey_df2 = survye_df.withColumn("Gender", parse_gender(gender))
+
+This will not work, directly a function cannot be applied to a df.
+
+we need to register UDF with spark driver by using
+
+parse_gender_udf = udf(parse_gender(), returnType=StringType)
+logger.info("Catalog Entry:")
+[logger.info(r) for r in spark.catalog.listFunctions() if "parse_gender" in r.name]
+
+Once registered, the function will be sent to all executors so that they can execute it.
+
+This line will not make UDF entry into Spark catalog:
+parse_gender_udf = udf(parse_gender(), returnType=StringType)
+
+So to make an entry into Spark catalog, use this:
+spark.udf.register("parse_gender_udf", parse_gender, StringType())
+
+So final code snippet is:
+
+    parse_gender_udf = udf(parse_gender(), returnType=StringType)
+    logger.info("Catalog Entry:")
+    [logger.info(r) for r in spark.catalog.listFunctions() if "parse_gender" in r.name]
+
+    survey_df2 = survey_df.withColumn("Gender", parse_gender_udf("Gender"))
+    survey_df2.show(10)
+
+    spark.udf.register("parse_gender_udf", parse_gender, StringType())
+    logger.info("Catalog Entry:")
+    [logger.info(r) for r in spark.catalog.listFunctions() if "parse_gender" in r.name]
+
+    survey_df3 = survey_df.withColumn("Gender", expr("parse_gender_udf(Gender)"))
+    survey_df3.show(10)
+
+14. Aggregations example
+
+first way:
+
+invoice_df.createOrReplaceTempView("sales")
+    summary_sql = spark.sql("""
+              SELECT Country, InvoiceNo,
+                    sum(Quantity) as TotalQuantity,
+                    round(sum(Quantity*UnitPrice),2) as InvoiceValue
+              FROM sales
+              GROUP BY Country, InvoiceNo""")
+
+    summary_sql.show()
+
+second way:
+
+    summary_df = invoice_df \
+        .groupBy("Country", "InvoiceNo") \
+        .agg(f.sum("Quantity").alias("TotalQuantity"),
+             f.round(f.sum(f.expr("Quantity * UnitPrice")), 2).alias("InvoiceValue"),
+             f.expr("round(sum(Quantity * UnitPrice),2) as InvoiceValueExpr")
+             )
+
+    summary_df.show()
+
+agg() -> function is specifically designed to accept a list of agg functions.
