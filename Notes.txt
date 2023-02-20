@@ -154,3 +154,173 @@ second way:
     summary_df.show()
 
 agg() -> function is specifically designed to accept a list of agg functions.
+
+15. The below example creates dataframe from simple arrays and show join of 2 dfs
+
+from pyspark.sql import SparkSession
+
+from lib.logger import Log4j
+
+if __name__ == "__main__":
+    spark = SparkSession \
+        .builder \
+        .appName("Spark Join Demo") \
+        .master("local[3]") \
+        .getOrCreate()
+
+    logger = Log4j(spark)
+
+    orders_list = [("01", "02", 350, 1),
+                   ("01", "04", 580, 1),
+                   ("01", "07", 320, 2),
+                   ("02", "03", 450, 1),
+                   ("02", "06", 220, 1),
+                   ("03", "01", 195, 1),
+                   ("04", "09", 270, 3),
+                   ("04", "08", 410, 2),
+                   ("05", "02", 350, 1)]
+
+    order_df = spark.createDataFrame(orders_list).toDF("order_id", "prod_id", "unit_price", "qty")
+
+    product_list = [("01", "Scroll Mouse", 250, 20),
+                    ("02", "Optical Mouse", 350, 20),
+                    ("03", "Wireless Mouse", 450, 50),
+                    ("04", "Wireless Keyboard", 580, 50),
+                    ("05", "Standard Keyboard", 360, 10),
+                    ("06", "16 GB Flash Storage", 240, 100),
+                    ("07", "32 GB Flash Storage", 320, 50),
+                    ("08", "64 GB Flash Storage", 430, 25)]
+
+    product_df = spark.createDataFrame(product_list).toDF("prod_id", "prod_name", "list_price", "qty")
+
+    product_df.show()
+    order_df.show()
+
+    join_expr = order_df.prod_id == product_df.prod_id
+
+    product_renamed_df = product_df.withColumnRenamed("qty", "reorder_qty")
+
+    order_df.join(product_renamed_df, join_expr, "inner") \
+        .drop(product_renamed_df.prod_id) \
+        .select("order_id", "prod_id", "prod_name", "unit_price", "list_price", "qty") \
+        .show()
+
+16. Spark Join Internals
+
+Shuffle Join
+Broadcast Join
+
+During join between 2 DF, lets say there are 2 DataFrames with 3 partitions each and assume there
+are 3 executors.
+
+So each executor will handle join between 2 partitions.
+
+It may happen that the records for join may not be available in the partitions with each executor.
+So they will shuffle the data on basis of join column and bring the data to the required executor.
+
+So when is shuffled in partitions, they are called shuffled partitions.
+
+In this case, we should have 3 shuffle partitions.
+
+Assume that there are 30 unique values of joining key. So value of key from 1-10 should
+go the reduce exchange 1, 10-20 should go to reduce exchange 2 and 20-30 should go to reduce exchange 3.
+
+This is called shuffle operation. This can choke our spark cluster. We should optimize such shuffle joins.
+
+Once shuffle operation is complete, data is available in 3 reduce exchanges.
+
+Now each exchange is self-sufficient to perform join and create a new partition of new dataframe.
+
+This is called shuffle sort merge join.
+
+To set shuffle partitions,
+ spark.conf.set("spark.sql.shuffle.partitions", 3)
+
+17. Optimizing joins
+
+ - When you want to join a large dataframe (global_sales) to small dataframe (us_sales) with inner join,
+   it makes no sense to load large dataframe as in the inner join, sales related to other countries will
+   be filtered out. So first filter the records in large dataframe and then load them.
+
+ - Shuffle partitions and number of executors
+
+   Maximum parallelism
+   Executors = 500
+   Shuffle partitions = 400
+
+   so maximum parallelism is limited to 400, as you can process only 400 partitions at a time.
+
+   Also if there are only 200 unique keys for partitioning column, so then out of this 400 partitions,
+   only 200 will be utilized.
+
+   So max. parallelism = 200
+
+   For e.g 2 DFs, sales (order_id, product_id, units, price ...) and products (product_id, product_name, list_price ..)
+
+   200 unique products
+   Max shuffle partitons = 200
+   Max paralle tasks = 200
+
+ - Key distribution
+
+   It may happen that out of 200 keys, there are some products which have more transactions than few other products.
+
+   So amount of time taken for some products for the join will take more time than others.
+
+   This is called Key Skews. Few tasks are delaying the overall execution time.
+
+ - Key things to remember
+
+   Large to Large - shuffle join
+   Large to small - broadcast join
+
+   Broadcast join should be done in case one of the dataframe is small enough to fit into driver and executor memory.
+
+ - To disable broadcast join
+
+    spark.conf.set("spark.sql.autoBroadcastJoinThreshold", -1)
+
+ - To avoid shuffling of data, and just do plain SortMergeJoin, refer project BucketJoinDemo and
+   video 62 in Spark Dataframe joins section.
+
+   from pyspark.sql import SparkSession
+
+from lib.logger import Log4j
+
+if __name__ == "__main__":
+    spark = SparkSession \
+        .builder \
+        .appName("Bucket Join Demo") \
+        .master("local[3]") \
+        .enableHiveSupport() \
+        .getOrCreate()
+
+    logger = Log4j(spark)
+    df1 = spark.read.json("data/d1/")
+    df2 = spark.read.json("data/d2/")
+    # df1.show()
+    # df2.show()
+    '''
+    spark.sql("CREATE DATABASE IF NOT EXISTS MY_DB")
+    spark.sql("USE MY_DB")
+
+    df1.coalesce(1).write \
+        .bucketBy(3, "id") \
+        .mode("overwrite") \
+        .saveAsTable("MY_DB.flight_data1")
+
+    df2.coalesce(1).write \
+        .bucketBy(3, "id") \
+        .mode("overwrite") \
+        .saveAsTable("MY_DB.flight_data2")
+    '''
+
+    df3 = spark.read.table("MY_DB.flight_data1")
+    df4 = spark.read.table("MY_DB.flight_data2")
+
+    spark.conf.set("spark.sql.autoBroadcastJoinThreshold", -1)
+    join_expr = df3.id == df4.id
+    join_df = df3.join(df4, join_expr, "inner")
+
+    join_df.collect()
+    input("press a key to stop...")
